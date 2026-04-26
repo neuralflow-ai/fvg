@@ -6,6 +6,7 @@
 
 # ── Section 1: Imports ───────────────────────────────────────
 import logging
+import os
 import threading
 import time
 from datetime import datetime
@@ -14,13 +15,15 @@ import pytz
 import requests
 import schedule
 import yfinance as yf
+from flask import Flask
 
 
 # ── Section 2: Constants ─────────────────────────────────────
 DISCORD_WEBHOOK_URL = "https://discordapp.com/api/webhooks/1497958569478328520/htlj5ENbEvMe_t3nY8w0TuD1g6iapL7Muzgb7J-S5B-O-Lb4U79sXgzHngtcpQ5m7wDc"
 
 SYMBOL      = "XAUUSD"
-YF_SYMBOL   = "GC=F"       # Gold futures on Yahoo Finance — proxy for XAUUSD
+YF_SYMBOL   = "GC=F"        # Gold futures — OHLC structure data
+COINBASE_URL = "https://api.coinbase.com/v2/prices/XAU-USD/spot"  # real spot price
 RISK_AMOUNT = 500           # $500 = 1% of $50,000
 SL_PIPS     = 8
 PIP_SIZE    = 0.10          # 1 pip = $0.10 for XAUUSD
@@ -132,15 +135,22 @@ def get_candles_1w(count: int = 2) -> list:
 
 
 def get_live_price() -> float:
+    # Coinbase public API — real XAUUSD spot price, no API key needed
     for attempt in range(3):
         try:
-            ticker = yf.Ticker(YF_SYMBOL)
-            price = ticker.fast_info.last_price
-            if price and price > 0:
-                return float(price)
+            r = requests.get(COINBASE_URL, timeout=10)
+            if r.status_code == 200:
+                price = float(r.json()["data"]["amount"])
+                if price > 0:
+                    return price
         except Exception as exc:
-            log.error("get_live_price error (attempt %d): %s", attempt + 1, exc)
+            log.error("Coinbase price error (attempt %d): %s", attempt + 1, exc)
             time.sleep(3)
+    # fallback: last GC=F candle close
+    candles = _fetch_candles("15m", "1d")
+    if candles:
+        log.warning("Using GC=F candle close as price fallback")
+        return candles[-1]["close"]
     return 0.0
 
 
@@ -757,6 +767,21 @@ def setup_schedule():
     log.info("Schedule set (UTC) — Morning 01:45 | London 09:00-13:00 | NY 14:00-18:00")
 
 
+# ── Health Server (keeps Render free web service alive) ──────
+
+_flask_app = Flask(__name__)
+
+@_flask_app.route("/")
+def health():
+    price = state.get("last_price", 0.0)
+    bias  = state.get("bias", "NEUTRAL")
+    return {"status": "ok", "bot": "GoldPulse AI", "bias": bias, "price": price}, 200
+
+def _run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    _flask_app.run(host="0.0.0.0", port=port, use_reloader=False)
+
+
 def main():
     log.info("=" * 60)
     log.info("GoldPulse AI starting — Signal Bot (no MT5 required)")
@@ -765,6 +790,7 @@ def main():
 
     # Startup test — verify price data works
     price = get_live_price()
+    state["last_price"] = price
     if price > 0:
         log.info("Price data OK — XAUUSD: $%.2f", price)
     else:
@@ -784,6 +810,10 @@ def main():
     )
 
     setup_schedule()
+
+    flask_thread = threading.Thread(target=_run_flask, daemon=True, name="FlaskHealth")
+    flask_thread.start()
+    log.info("Health server started on port %s", os.environ.get("PORT", 8080))
 
     sweep_thread = threading.Thread(target=session_sweep_loop, daemon=True, name="SweepLoop")
     sweep_thread.start()
