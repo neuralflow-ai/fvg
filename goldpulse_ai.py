@@ -767,7 +767,7 @@ def setup_schedule():
     log.info("Schedule set (UTC) — Morning 01:45 | London 09:00-13:00 | NY 14:00-18:00")
 
 
-# ── Health Server (keeps Render free web service alive) ──────
+# ── Flask Health Server ──────────────────────────────────────
 
 _flask_app = Flask(__name__)
 
@@ -777,18 +777,34 @@ def health():
     bias  = state.get("bias", "NEUTRAL")
     return {"status": "ok", "bot": "GoldPulse AI", "bias": bias, "price": price}, 200
 
-def _run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    _flask_app.run(host="0.0.0.0", port=port, use_reloader=False)
+
+# ── Bot Startup (runs on module import — works with gunicorn) ─
+
+_bot_started = False
+_bot_lock    = threading.Lock()
 
 
-def main():
+def _schedule_loop():
+    while True:
+        try:
+            schedule.run_pending()
+        except Exception as exc:
+            log.error("Schedule loop error: %s", exc)
+        time.sleep(30)
+
+
+def _start_bot():
+    global _bot_started
+    with _bot_lock:
+        if _bot_started:
+            return
+        _bot_started = True
+
     log.info("=" * 60)
     log.info("GoldPulse AI starting — Signal Bot (no MT5 required)")
     log.info("Data: Yahoo Finance (%s) | Signals: Discord", YF_SYMBOL)
     log.info("=" * 60)
 
-    # Startup test — verify price data works
     price = get_live_price()
     state["last_price"] = price
     if price > 0:
@@ -811,22 +827,17 @@ def main():
 
     setup_schedule()
 
-    flask_thread = threading.Thread(target=_run_flask, daemon=True, name="FlaskHealth")
-    flask_thread.start()
-    log.info("Health server started on port %s", os.environ.get("PORT", 8080))
-
-    sweep_thread = threading.Thread(target=session_sweep_loop, daemon=True, name="SweepLoop")
-    sweep_thread.start()
+    threading.Thread(target=session_sweep_loop, daemon=True, name="SweepLoop").start()
+    threading.Thread(target=_schedule_loop,     daemon=True, name="SchedLoop").start()
 
     log.info("Bot running — waiting for sessions...")
 
-    while True:
-        try:
-            schedule.run_pending()
-        except Exception as exc:
-            log.error("Main loop error: %s", exc)
-        time.sleep(30)
+
+# Start bot when module is imported (gunicorn imports module, then serves Flask)
+_start_bot()
 
 
 if __name__ == "__main__":
-    main()
+    # Local dev: run Flask dev server directly
+    port = int(os.environ.get("PORT", 8080))
+    _flask_app.run(host="0.0.0.0", port=port, use_reloader=False)
