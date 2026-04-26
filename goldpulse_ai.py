@@ -480,15 +480,15 @@ def calculate_tps(bias: str, entry: float, candles_15m: list, candles_1h: list):
         tp3 = max(c["high"] for c in candles_w1) if direction == "BUY" \
               else min(c["low"] for c in candles_w1)
 
-    # Fallbacks if levels not found
+    # Fallbacks if levels not found or invalid (0.0 = not found)
     if direction == "BUY":
-        if tp1 <= entry: tp1 = round(entry + SL_DISTANCE * 2, 2)
-        if tp2 <= tp1:   tp2 = round(tp1   + SL_DISTANCE * 3, 2)
-        if tp3 <= tp2:   tp3 = round(tp2   + SL_DISTANCE * 5, 2)
+        if tp1 <= entry or tp1 <= 0: tp1 = round(entry + SL_DISTANCE * 2, 2)
+        if tp2 <= tp1  or tp2 <= 0:  tp2 = round(tp1   + SL_DISTANCE * 3, 2)
+        if tp3 <= tp2  or tp3 <= 0:  tp3 = round(tp2   + SL_DISTANCE * 5, 2)
     else:
-        if tp1 >= entry: tp1 = round(entry - SL_DISTANCE * 2, 2)
-        if tp2 >= tp1:   tp2 = round(tp1   - SL_DISTANCE * 3, 2)
-        if tp3 >= tp2:   tp3 = round(tp2   - SL_DISTANCE * 5, 2)
+        if tp1 >= entry or tp1 <= 0: tp1 = round(entry - SL_DISTANCE * 2, 2)
+        if tp2 >= tp1  or tp2 <= 0:  tp2 = round(tp1   - SL_DISTANCE * 3, 2)
+        if tp3 >= tp2  or tp3 <= 0:  tp3 = round(tp2   - SL_DISTANCE * 5, 2)
 
     return round(tp1, 2), round(tp2, 2), round(tp3, 2)
 

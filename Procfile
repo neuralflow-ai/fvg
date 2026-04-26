@@ -1,1 +1,1 @@
-worker: python goldpulse_ai.py
+web: python goldpulse_ai.py

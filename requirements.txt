@@ -2,3 +2,4 @@ yfinance
 requests
 pytz
 schedule
+flask
